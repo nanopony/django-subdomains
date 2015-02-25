@@ -53,7 +53,7 @@ def reverse(viewname, subdomain=None, scheme=None, args=None, kwargs=None,
     """
     urlconf = settings.SUBDOMAIN_URLCONFS.get(subdomain, settings.ROOT_URLCONF)
 
-    domain = get_domain()
+    domain = settings.MAIN_DOMAIN
     if subdomain is not None:
         domain = '%s.%s' % (subdomain, domain)
 
