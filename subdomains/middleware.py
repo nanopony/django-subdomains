@@ -1,50 +1,24 @@
+from django.http import Http404
+from django.utils.module_loading import import_string
 import operator
 import logging
 import re
-
 from django.conf import settings
 from django.utils.cache import patch_vary_headers
 
-from subdomains.utils import get_domain
-
-
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('django')
 lower = operator.methodcaller('lower')
 
 UNSET = object()
 
+main_domain_regex = re.compile(r'^(?:(?P<subdomain>.*?)\.)?%s(?::.*)?$' % re.escape(settings.MAIN_DOMAIN.lower()))
 
-class SubdomainMiddleware(object):
-    """
-    A middleware class that adds a ``subdomain`` attribute to the current request.
-    """
-    def get_domain_for_request(self, request):
-        """
-        Returns the domain that will be used to identify the subdomain part
-        for this request.
-        """
-        return get_domain()
+try:
+    virtualhost_to_urlconf = import_string(settings.VIRTUALHOST_URLCONF_RESOLVER_FUNC)
+except AttributeError:
+    virtualhost_to_urlconf = lambda q: False
 
-    def process_request(self, request):
-        """
-        Adds a ``subdomain`` attribute to the ``request`` parameter.
-        """
-        domain, host = map(lower,
-            (self.get_domain_for_request(request), request.get_host()))
-
-        pattern = r'^(?:(?P<subdomain>.*?)\.)?%s(?::.*)?$' % re.escape(domain)
-        matches = re.match(pattern, host)
-
-        if matches:
-            request.subdomain = matches.group('subdomain')
-        else:
-            request.subdomain = None
-            logger.warning('The host %s does not belong to the domain %s, '
-                'unable to identify the subdomain for this request',
-                request.get_host(), domain)
-
-
-class SubdomainURLRoutingMiddleware(SubdomainMiddleware):
+class SubdomainURLRoutingMiddleware():
     """
     A middleware class that allows for subdomain-based URL routing.
     """
@@ -54,16 +28,25 @@ class SubdomainURLRoutingMiddleware(SubdomainMiddleware):
         associated with the subdomain, if it is listed in
         ``settings.SUBDOMAIN_URLCONFS``.
         """
-        super(SubdomainURLRoutingMiddleware, self).process_request(request)
 
-        subdomain = getattr(request, 'subdomain', UNSET)
+        host = request.get_host().lower()
+        matches = main_domain_regex.match(host)
+        if matches:
+            request.subdomain = matches.group('subdomain')
+            if request.subdomain is not UNSET:
+                urlconf = settings.SUBDOMAIN_URLCONFS.get(request.subdomain)
+                if urlconf is not None:
+                    request.urlconf = urlconf
+        else:
+            request.subdomain = None
+            urlconf = virtualhost_to_urlconf(host)
+            if urlconf is False:
+                logger.error('Attempt to access %s as hostname; Ignored;' % host)
+                raise Http404
+            request.urlconf = urlconf
 
-        if subdomain is not UNSET:
-            urlconf = settings.SUBDOMAIN_URLCONFS.get(subdomain)
-            if urlconf is not None:
-                logger.debug("Using urlconf %s for subdomain: %s",
-                    repr(urlconf), repr(subdomain))
-                request.urlconf = urlconf
+
+
 
     def process_response(self, request, response):
         """
