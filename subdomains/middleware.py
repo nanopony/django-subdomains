@@ -43,6 +43,7 @@ class SubdomainURLRoutingMiddleware():
             if urlconf is False:
                 logger.error('Attempt to access %s as hostname; Ignored;' % host)
                 raise Http404
+            request.host = host
             request.urlconf = urlconf
 
 
